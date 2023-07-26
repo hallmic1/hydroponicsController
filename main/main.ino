@@ -1,37 +1,142 @@
-/*
-  Blink
+#include <WiFi.h>
+#include <HTTPClient.h>
 
-  Turns an LED on for one second, then off for one second, repeatedly.
+class Pump {
+private:
+    int _state;
+    String _url;
+    int _pin;
+    HTTPClient _http;
+    bool _shouldSendNetworkRequest(int state);
+    int _sendNetworkRequest(String path);
+    void _handleResponse(int httpResponseCode);
 
-  Most Arduinos have an on-board LED you can control. On the UNO, MEGA and ZERO
-  it is attached to digital pin 13, on MKR1000 on pin 6. LED_BUILTIN is set to
-  the correct LED pin independent of which board is used.
-  If you want to know what pin the on-board LED is connected to on your Arduino
-  model, check the Technical Specs of your board at:
-  https://www.arduino.cc/en/Main/Products
 
-  modified 8 May 2014
-  by Scott Fitzgerald
-  modified 2 Sep 2016
-  by Arturo Guadalupi
-  modified 8 Sep 2016
-  by Colby Newman
+public:
+    Pump(int pin, String url);
+    void setActive();
+    void setInactive();
+    void init();
+};
 
-  This example code is in the public domain.
+class Network {
+private:
+    String _baseurl;
+public:
+    Network(String baseurl);
+    int sendGet(String extension);
+}
+//
+//                                                                                                PLANT_LOOP
+//                                                                                              |-->------->|
+//                                                                                              |           |
+//                                                                                              |           |
+//---->--PUMP_WATER->-|                                                           |       |     |           |
+//                    |                                                           | Fert  |     ^           |
+//                                                                                |       |     |           |
+//                | WATER |                       |  MIX  | -<--PER_PUMP_FERT--<- _________     |           |
+//                | FLOAT |-->-PER_PUMP_WATER->-- | FLOAT |------>------PUMP_MIX--------->------|           |
+//                |SWITCH |                       |SWITCH |--------------<---GRAVITY_FED----<----------------
+//                _________                       _________
+//
 
-  https://www.arduino.cc/en/Tutorial/BuiltInExamples/Blink
-*/
 
-// the setup function runs once when you press reset or power the board
+const char* ssid = "pretty fly for a wifi";
+const char* password = "dont4getFreya";
+
+String serverAddress = "http://100.120.17.84:3000";
+
+#define PUMP_WATER 2
+#define PUMP_MIX 4
+#define FLOAT_SWITCH 21
+#define PER_PUMP_WATER_DIR 35
+#define PER_PUMP_WATER_STEP 34
+#define PER_PUMP_FERT_DIR 33
+#define PER_PUMP_FERT_STEP 34
+Pump pump_water(PUMP_WATER, serverAddress);
+Pump pump_mix(PUMP_MIX, serverAddress);
+//TODO: Extract network methods into own class, use that now extracted method to call /init on server to get server time. set time locally to that time.
+// remember, we'll need to calculate how much flow our PUMP_TWO creates as we'll be using a peristaltic pump, slowly rotating for each second PUMP_ONE is on.
+// do we need a second bucket to act as a bason between the wall and the mixing bucket? without knowing the flow from the house is constant, we may need both pumps to be peristaltic pumps.
+// if we do, we can calulate how much water is being used by our system. I doubt we'd need much flow, as the plants are slow drinkers :)
 void setup() {
-  // initialize digital pin LED_BUILTIN as an output.
-  pinMode(LED_BUILTIN, OUTPUT);
+    pinMode(FLOAT_SWITCH, INPUT);
+
+    Serial.begin(115200);
+    WiFi.begin(ssid, password);
+    while(WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println("");
+    Serial.print("Connected to WiFi network with IP Address: ");
+    Serial.println(WiFi.localIP());
+
+    pump_water.init();
+    pump_mix.init();
+}
+void loop() {
+    if(digitalRead(FLOAT_SWITCH) == HIGH) {
+        pump_water.setActive();
+    } else {
+        pump_water.setInactive();
+    }
+
+    delay(200);
 }
 
-// the loop function runs over and over again forever
-void loop() {
-  digitalWrite(LED_BUILTIN, HIGH);  // turn the LED on (HIGH is the voltage level)
-  delay(1000);                      // wait for a second
-  digitalWrite(LED_BUILTIN, LOW);   // turn the LED off by making the voltage LOW
-  delay(1000);                      // wait for a second
+
+Pump::Pump(int pin, String url) {
+    _pin = pin;
+    _state = LOW;
+    _url = url;
+    pinMode(_pin, OUTPUT);
+}
+
+void Pump::setActive() {
+    bool shouldSendNetworkRequest = _shouldSendNetworkRequest(HIGH);
+    _state = HIGH;
+    digitalWrite(_pin, _state);
+    if(shouldSendNetworkRequest) {
+        int response = _sendNetworkRequest("/pump/start/" + String(_pin));
+        _handleResponse(response);
+        _http.end();
+    }
+}
+
+void Pump::setInactive() {
+    bool shouldSendNetworkRequest = _shouldSendNetworkRequest(LOW);
+    _state = LOW;
+    digitalWrite(_pin, _state);
+    if(shouldSendNetworkRequest) {
+        int response = _sendNetworkRequest("/pump/stop/" + String(_pin));
+        _handleResponse(response);
+        _http.end();
+    }
+}
+
+bool Pump::_shouldSendNetworkRequest(int state) {
+    return state != _state;
+}
+
+int Pump::_sendNetworkRequest(String path) {
+    _http.begin( (_url + path).c_str());
+    _http.addHeader("Content-Type", "text/plain");
+    return _http.GET();
+}
+
+void Pump::_handleResponse(int httpResponseCode) {
+    if(httpResponseCode > 0) {
+        String response = _http.getString();
+        Serial.println(response);
+    } else {
+        Serial.print("Error on sending POST: ");
+        Serial.println(httpResponseCode);
+    }
+}
+
+void Pump::init() {
+    int response = _sendNetworkRequest("/pump/init/" + String(_pin));
+    _handleResponse(response);
+    _http.end();
 }
