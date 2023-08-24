@@ -5,10 +5,10 @@
 #include "Switch.h"
 #include <Arduino.h>
 
-Switch::Switch(int pin, String url, String name) {
+Switch::Switch(int pin, String url, String name, int state = LOW) {
     _name = name;
     _pin = pin;
-    _state = LOW;
+    _state = state;
     _url = url;
     pinMode(_pin, INPUT_PULLUP);
 }

@@ -17,7 +17,7 @@ class Switch {
         int _sendNetworkRequest(String path);
         void _handleResponse(int httpResponseCode);
     public:
-        Switch(int pin, String url, String name);
+        Switch(int pin, String url, String name, int state = LOW);
         bool isActive();
         void init();
         int getState();
