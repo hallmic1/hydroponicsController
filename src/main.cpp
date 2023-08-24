@@ -45,16 +45,14 @@ int fert_multiplier = 757;
 int tick = 0;
 #define WATER_SOLENOID 2
 #define PUMP_MIX 4
-#define WATER_FLOAT_MAX_SWITCH 33
-#define WATER_FLOAT_MIN_SWITCH 25
-#define MIX_FLOAT_MAX_SWITCH 35
-#define MIX_FLOAT_MIN_SWITCH 32
+#define WATER_FLOAT_MAX_SWITCH 21
+#define WATER_FLOAT_MIN_SWITCH 19
+#define MIX_FLOAT_MAX_SWITCH 18
+#define MIX_FLOAT_MIN_SWITCH 5
 #define PER_PUMP_WATER_DIR 26
 #define PER_PUMP_WATER_STEP 27 // looks like we need 757 ml of water to 1 ml of fertilizer.
 #define PER_PUMP_FERT_DIR 12
 #define PER_PUMP_FERT_STEP 14
-#define SWITCHES_CONNECTED 34
-
 Network network(serverAddress);
 
 Pump water_solenoid(WATER_SOLENOID, serverAddress, "Water_Solenoid", network);
@@ -65,7 +63,6 @@ Switch water_float_max_switch(WATER_FLOAT_MAX_SWITCH, serverAddress, "Water_Floa
 Switch water_float_min_switch(WATER_FLOAT_MIN_SWITCH, serverAddress, "Water_Float_Min_Switch");
 Switch mix_float_max_switch(MIX_FLOAT_MAX_SWITCH, serverAddress, "Mix_Float_Max_Switch");
 Switch mix_float_min_switch(MIX_FLOAT_MIN_SWITCH, serverAddress, "Mix_Float_Min_Switch");
-Switch switches_connected(SWITCHES_CONNECTED, serverAddress, "Switches_Connected", HIGH);
 //TODO:
 // remember, we'll need to calculate how much flow our PUMP_TWO creates as we'll be using a peristaltic pump, slowly rotating for each second PUMP_ONE is on.
 // we can calculate how much water is being used by our system. I doubt we'd need much flow, as the plants are slow drinkers :)
@@ -94,15 +91,13 @@ __attribute__((unused)) void loop() {
             ESP.restart();
         }
     } else {
-        if(switches_connected.isActive()) {
-            water_solenoid.setState(!water_float_max_switch.isActive() && !water_float_min_switch.isActive());
-            water_float_min_switch.isActive();
-            pump_mix.setState(mix_float_min_switch.isActive() && is_pump_on());
-            per_pump_water.setState(!mix_float_max_switch.isActive());
-            per_pump_water.run(base_speed, tick);
-            per_pump_fert.setState(per_pump_water.isActive());
-            per_pump_fert.run(base_speed * fert_multiplier, tick);
-        }
+        water_solenoid.setState(!water_float_max_switch.isActive() && !water_float_min_switch.isActive());
+        water_float_min_switch.isActive();
+        pump_mix.setState(mix_float_min_switch.isActive() && is_pump_on());
+        per_pump_water.setState(!mix_float_max_switch.isActive());
+        per_pump_water.run(base_speed, tick);
+        per_pump_fert.setState(per_pump_water.isActive());
+        per_pump_fert.run(base_speed * fert_multiplier, tick);
         WiFiClient client = server.available();
         if (client) {
             currentTime = millis();
