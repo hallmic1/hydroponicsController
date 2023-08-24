@@ -36,21 +36,25 @@ String serverHeader;
 unsigned long currentTime = millis();
 unsigned long previousTime = 0;
 const long timeoutTime = 2000;
-
+const long fifteenMinutes = 1000 * 60 * 15;
+long mixPumpTimer = 0;
+boolean mixPumpOn = true;
 int base_speed = 150;
 int fert_multiplier = 757;
 
 int tick = 0;
 #define WATER_SOLENOID 2
 #define PUMP_MIX 4
-#define WATER_FLOAT_MAX_SWITCH 21
-#define WATER_FLOAT_MIN_SWITCH 19
-#define MIX_FLOAT_MAX_SWITCH 18
-#define MIX_FLOAT_MIN_SWITCH 5
+#define WATER_FLOAT_MAX_SWITCH 33
+#define WATER_FLOAT_MIN_SWITCH 25
+#define MIX_FLOAT_MAX_SWITCH 35
+#define MIX_FLOAT_MIN_SWITCH 32
 #define PER_PUMP_WATER_DIR 26
 #define PER_PUMP_WATER_STEP 27 // looks like we need 757 ml of water to 1 ml of fertilizer.
 #define PER_PUMP_FERT_DIR 12
 #define PER_PUMP_FERT_STEP 14
+#define SWITCHES_CONNECTED 34
+
 Network network(serverAddress);
 
 Pump water_solenoid(WATER_SOLENOID, serverAddress, "Water_Solenoid", network);
@@ -61,6 +65,7 @@ Switch water_float_max_switch(WATER_FLOAT_MAX_SWITCH, serverAddress, "Water_Floa
 Switch water_float_min_switch(WATER_FLOAT_MIN_SWITCH, serverAddress, "Water_Float_Min_Switch");
 Switch mix_float_max_switch(MIX_FLOAT_MAX_SWITCH, serverAddress, "Mix_Float_Max_Switch");
 Switch mix_float_min_switch(MIX_FLOAT_MIN_SWITCH, serverAddress, "Mix_Float_Min_Switch");
+Switch switches_connected(SWITCHES_CONNECTED, serverAddress, "Switches_Connected", HIGH);
 //TODO:
 // remember, we'll need to calculate how much flow our PUMP_TWO creates as we'll be using a peristaltic pump, slowly rotating for each second PUMP_ONE is on.
 // we can calculate how much water is being used by our system. I doubt we'd need much flow, as the plants are slow drinkers :)
@@ -70,8 +75,9 @@ Switch mix_float_min_switch(MIX_FLOAT_MIN_SWITCH, serverAddress, "Mix_Float_Min_
 void sendStatus(WiFiClient client);
 void start_mdns_service();
 void initialize_with_network();
+bool is_pump_on();
 void setup() {
-    Serial.begin(115200);
+    Serial.begin(9600);
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
     delay(100);
@@ -88,13 +94,15 @@ __attribute__((unused)) void loop() {
             ESP.restart();
         }
     } else {
-        water_solenoid.setState(!water_float_max_switch.isActive());
-        water_float_min_switch.isActive();
-        pump_mix.setState(mix_float_min_switch.isActive());
-        per_pump_water.setState(!mix_float_max_switch.isActive());
-        per_pump_water.run(base_speed, tick);
-        per_pump_fert.setState(per_pump_water.isActive());
-        per_pump_fert.run(base_speed * fert_multiplier, tick);
+        if(switches_connected.isActive()) {
+            water_solenoid.setState(!water_float_max_switch.isActive() && !water_float_min_switch.isActive());
+            water_float_min_switch.isActive();
+            pump_mix.setState(mix_float_min_switch.isActive() && is_pump_on());
+            per_pump_water.setState(!mix_float_max_switch.isActive());
+            per_pump_water.run(base_speed, tick);
+            per_pump_fert.setState(per_pump_water.isActive());
+            per_pump_fert.run(base_speed * fert_multiplier, tick);
+        }
         WiFiClient client = server.available();
         if (client) {
             currentTime = millis();
@@ -103,7 +111,7 @@ __attribute__((unused)) void loop() {
             while (client.connected() && currentTime - previousTime <= timeoutTime) {
                 currentTime = millis();
                 if (client.available()) {
-                    char c = client.read();
+                    int c = client.read();
                     serverHeader += c;
                     if (c == '\n') {
                         if (currentLine.length() == 0) {
@@ -112,7 +120,8 @@ __attribute__((unused)) void loop() {
                             client.println("Access-Control-Allow-Origin: *" );
                             client.println("Connection: close");
                             client.println();
-                            if(serverHeader.indexOf("GET /health") >= 0) {
+                            if(serverHeader.indexOf(String("/health").toInt()) >= 0) {
+                                Serial.println("Health check");
                                 client.println(R"({"status": "OK"})");
                             } else {
                                 sendStatus(client);
@@ -135,7 +144,14 @@ __attribute__((unused)) void loop() {
     }
     tick = tick + 1;
 }
-
+bool is_pump_on() {
+    if(mixPumpTimer > fifteenMinutes) {
+        mixPumpOn = !mixPumpOn;
+        mixPumpTimer = 0;
+    }
+    mixPumpTimer = mixPumpTimer + 1;
+    return mixPumpOn;
+}
 void initialize_with_network() {
     Serial.println("Connecting to WiFi network: " + String(ssid) + " with password: " + String(password));
     while(WiFiClass::status() != WL_CONNECTED) {
@@ -190,23 +206,23 @@ void sendStatus(WiFiClient client) {
     client.println("},");
     client.println("\"peristaltic_pumps\": {");
     client.println("\"Per_Pump_Water\": {");
-    client.println("\"direction\": " + String(per_pump_water.getState().direction));
-    client.println(", \"on\": " + String(per_pump_water.getState().on));
+    client.println("\"direction\": " + String(per_pump_water.getState().direction) + ",");
+    client.println("\"on\": " + String(per_pump_water.getState().on));
     client.println("},");
     client.println("\"Per_Pump_Fert\": {");
-    client.println("\"direction\": " + String(per_pump_fert.getState().direction));
-    client.println(", \"on\": " + String(per_pump_fert.getState().on));
+    client.println("\"direction\": " + String(per_pump_fert.getState().direction) + ",");
+    client.println("\"on\": " + String(per_pump_fert.getState().on));
     client.println("}");
     client.println("},");
     client.println("\"float_switches\": {");
     client.println(
-            "\"Water_Float_Max_Switch\": " + String(water_float_max_switch.getState()));
+            "\"Water_Float_Max_Switch\": " + String(water_float_max_switch.getState()) + ",");
     client.println(
-            ", \"Water_Float_Min_Switch\": " + String(water_float_min_switch.getState()));
+            "\"Water_Float_Min_Switch\": " + String(water_float_min_switch.getState()) + ",");
     client.println(
-            ", \"Mix_Float_Max_Switch\": " + String(mix_float_max_switch.getState()));
+            "\"Mix_Float_Max_Switch\": " + String(mix_float_max_switch.getState()) + ",");
     client.println(
-            ", \"Mix_Float_Min_Switch\": " + String(mix_float_min_switch.getState()));
+            "\"Mix_Float_Min_Switch\": " + String(mix_float_min_switch.getState()));
     client.println("}");
     client.println("}");
     client.println();
